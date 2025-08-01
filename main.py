@@ -122,6 +122,20 @@ def get_clef_quiz_keyboard():
         resize_keyboard=True
     )
 
+NOTES_TREBLE = {
+    "до": {"image_path": "media/treble_nots/treble_do.png", "octave": "первой октавы"},
+    "ре": {"image_path": "media/treble_nots/treble_re.png", "octave": "первой октавы"},
+    "ми": {"image_path": "media/treble_nots/treble_mi.png", "octave": "первой октавы"},
+    "фа": {"image_path": "media/treble_nots/treble_fa.png", "octave": "первой октавы"},
+    "соль": {"image_path": "media/treble_nots/treble_sol.png", "octave": "первой октавы"},
+    "ля": {"image_path": "media/treble_nots/treble_la.png", "octave": "первой октавы"},
+    "си": {"image_path": "media/treble_nots/treble_si.png", "octave": "первой октавы"},
+    "до2": {"image_path": "media/treble_nots/treble_do2.png", "octave": "второй октавы"},
+    "ре2": {"image_path": "media/treble_nots/treble_re2.png", "octave": "второй октавы"},
+    "ми2": {"image_path": "media/treble_nots/treble_mi2.png", "octave": "второй октавы"},
+    "фа2": {"image_path": "media/treble_nots/treble_fa2.png", "octave": "второй октавы"},
+    "соль2": {"image_path": "media/treble_nots/treble_sol2.png", "octave": "второй октавы"},
+}
 
 # Основные обработчики команд
 @dp.message(Command('start'))
@@ -263,7 +277,7 @@ async def check_clef_answer(message: types.Message):
     await send_random_clef(message)
 
 
-@dp.message(F.text == "Назад")
+
 @dp.message(F.text == "Назад")
 async def back_from_quiz(message: types.Message):
     user_id = message.from_user.id
@@ -279,6 +293,105 @@ async def back_from_quiz(message: types.Message):
     else:
         await message.answer("Выберите раздел:", reply_markup=get_class_keyboard())
 
+
+# Клавиатура для ответов
+def get_note_quiz_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="До"), KeyboardButton(text="Ре")],
+            [KeyboardButton(text="Ми"), KeyboardButton(text="Фа")],
+            [KeyboardButton(text="Соль"), KeyboardButton(text="Ля")],
+            [KeyboardButton(text="Си"), KeyboardButton(text="Назад")]
+        ],
+        resize_keyboard=True
+    )
+
+
+# Обработчик старта викторины
+@dp.message(F.text == "Ноты в скрипичном ключе")
+async def start_treble_quiz(message: types.Message):
+    user_states[message.from_user.id] = {
+        "mode": "treble_quiz",
+        "score": 0,
+        "total": 0,
+        "current_note": None
+    }
+    await message.answer(
+        "🎼 Определите ноты в скрипичном ключе!\n"
+        "Я покажу ноту - вы выбираете её название.",
+        reply_markup=get_note_quiz_keyboard()
+    )
+    await send_random_treble_note(message)
+
+
+# Функция отправки случайной ноты
+async def send_random_treble_note(message: types.Message):
+    user_id = message.from_user.id
+    if user_id not in user_states or user_states[user_id].get("mode") != "treble_quiz":
+        return
+
+    note_name, note_data = random.choice(list(NOTES_TREBLE.items()))
+    user_states[user_id]["current_note"] = note_name
+
+    try:
+        with open(note_data["image_path"], 'rb') as photo:
+            await message.answer_photo(
+                types.BufferedInputFile(photo.read(), filename="note.png"),
+                caption="Какая это нота?",
+                reply_markup=get_note_quiz_keyboard()
+            )
+    except Exception as e:
+        logging.error(f"Ошибка загрузки ноты: {e}")
+        await message.answer(
+            f"Нота {note_name} {note_data['octave']}",
+            reply_markup=get_note_quiz_keyboard()
+        )
+
+
+# Обработчик ответов
+@dp.message(F.text.in_(["До", "Ре", "Ми", "Фа", "Соль", "Ля", "Си"]))
+async def check_treble_answer(message: types.Message):
+    user_id = message.from_user.id
+    user_state = user_states.get(user_id, {})
+
+    if user_state.get("mode") != "treble_quiz":
+        return
+
+    current_note = user_state.get("current_note")
+    if not current_note:
+        await message.answer("Ошибка! Начните викторину заново")
+        return
+
+    user_answer = message.text.lower()
+    correct_note = current_note.replace("2", "")  # Убираем номер октавы для сравнения
+
+    user_states[user_id]["total"] += 1
+
+    if user_answer == correct_note:
+        user_states[user_id]["score"] += 1
+        response = f"✅ Правильно! Это нота {correct_note} {NOTES_TREBLE[current_note]['octave']}"
+    else:
+        response = f"❌ Почти! Это нота {correct_note}\nПопробуем ещё раз!"
+
+    await message.answer(response, reply_markup=get_note_quiz_keyboard())
+    await asyncio.sleep(1)
+    await send_random_treble_note(message)
+
+
+# Обновленный обработчик "Назад"
+@dp.message(F.text == "Назад")
+async def back_from_treble_quiz(message: types.Message):
+    user_id = message.from_user.id
+    if user_states.get(user_id, {}).get("mode") == "treble_quiz":
+        score = user_states[user_id].get("score", 0)
+        total = user_states[user_id].get("total", 0)
+        await message.answer(
+            f"🎉 Викторина завершена!\n"
+            f"Ваш результат: {score} из {total}",
+            reply_markup=get_music_keyboard()
+        )
+    user_states[user_id] = {}
+    await message.answer("Выберите раздел:", reply_markup=get_class_keyboard())
 
 # Запуск бота
 async def main():
