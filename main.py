@@ -170,6 +170,54 @@ NOTES_BASS = {
     "ми_1": {"image_path": str(MEDIA_DIR / "bass_nots/bass_mi_first.png"), "octave": "первой октавы"}
 }
 
+KEYBOARD_NOTES = {
+    "до": {"image_path": str(MEDIA_DIR / "keyboard/keyboard_do.jpg"), "octave": ""},
+    "ре": {"image_path": str(MEDIA_DIR / "keyboard/keyboard_re.jpg"), "octave": ""},
+    "ми": {"image_path": str(MEDIA_DIR / "keyboard/keyboard_mi.jpg"), "octave": ""},
+    "фа": {"image_path": str(MEDIA_DIR / "keyboard/keyboard_fa.jpg"), "octave": ""},
+    "соль": {"image_path": str(MEDIA_DIR / "keyboard/keyboard_sol.jpg"), "octave": ""},
+    "ля": {"image_path": str(MEDIA_DIR / "keyboard/keyboard_la.jpg"), "octave": ""},
+    "си": {"image_path": str(MEDIA_DIR / "keyboard/keyboard_si.jpg"), "octave": ""},
+    "до2": {"image_path": str(MEDIA_DIR / "keyboard/keyboard_do2.jpg"), "octave": ""}
+}
+
+# Добавляем обработчик для раздела клавиатуры
+@dp.message(F.text == "Клавиатура")
+async def start_keyboard_quiz(message: types.Message):
+    user_states[message.from_user.id] = {
+        "mode": "keyboard_quiz",
+        "score": 0,
+        "total": 0,
+        "current_note": None
+    }
+    await message.answer(
+        "🎹 Викторина по клавиатуре!\n"
+        "Я покажу клавишу - вы определяете её ноту.",
+        reply_markup=get_note_quiz_keyboard()  # Используем ту же клавиатуру с нотами
+    )
+    await send_random_keyboard_note(message)
+
+async def send_random_keyboard_note(message: types.Message):
+    user_id = message.from_user.id
+    if user_id not in user_states or user_states[user_id].get("mode") != "keyboard_quiz":
+        return
+
+    note_name, note_data = random.choice(list(KEYBOARD_NOTES.items()))
+    user_states[user_id]["current_note"] = note_name
+
+    try:
+        with open(note_data["image_path"], 'rb') as photo:
+            await message.answer_photo(
+                types.BufferedInputFile(photo.read(), filename="keyboard.png"),
+                caption="Какая это нота?",
+                reply_markup=get_note_quiz_keyboard()
+            )
+    except Exception as e:
+        logging.error(f"Ошибка загрузки изображения клавиатуры: {e}")
+        await message.answer(
+            "Изображение клавиши не загружено",
+            reply_markup=get_note_quiz_keyboard()
+        )
 
 # Основные обработчики команд
 @dp.message(Command('start'))
@@ -376,13 +424,14 @@ async def send_random_bass_note(message: types.Message):
         )
 
 
+
 @dp.message(F.text.in_(["До", "Ре", "Ми", "Фа", "Соль", "Ля", "Си"]))
 async def check_note_answer(message: types.Message):
     user_id = message.from_user.id
     user_state = user_states.get(user_id, {})
     mode = user_state.get("mode")
 
-    if mode not in ["treble_quiz", "bass_quiz"]:
+    if mode not in ["treble_quiz", "bass_quiz", "keyboard_quiz"]:
         await message.answer("Пожалуйста, начните викторину через меню")
         return
 
@@ -391,29 +440,36 @@ async def check_note_answer(message: types.Message):
         await message.answer("Ошибка! Начните викторину заново")
         return
 
+    # Определяем правильный ответ в зависимости от режима
     if mode == "treble_quiz":
         correct_note = current_note.replace("2", "")
         octave_info = NOTES_TREBLE[current_note]["octave"]
-    else:
+    elif mode == "bass_quiz":
         correct_note = current_note.split("_")[0]
         octave_info = NOTES_BASS[current_note]["octave"]
+    else:  # keyboard_quiz
+        correct_note = current_note.replace("2", "")
+        octave_info = ""
 
     user_answer = message.text.lower()
     user_states[user_id]["total"] += 1
 
     if user_answer == correct_note:
         user_states[user_id]["score"] += 1
-        response = f"✅ Верно! Это нота {correct_note} {octave_info}"
+        response = f"✅ Верно! Это нота {correct_note}{' ' + octave_info if octave_info else ''}"
     else:
-        response = f"❌ Неверно! Это нота {correct_note} {octave_info}"
+        response = f"❌ Неверно! Это нота {correct_note}{' ' + octave_info if octave_info else ''}"
 
     await message.answer(response, reply_markup=get_note_quiz_keyboard())
     await asyncio.sleep(1)
 
+    # Отправляем следующий вопрос в зависимости от режима
     if mode == "treble_quiz":
         await send_random_treble_note(message)
-    else:
+    elif mode == "bass_quiz":
         await send_random_bass_note(message)
+    else:
+        await send_random_keyboard_note(message)
 
 
 @dp.message(F.text == "Назад")
@@ -422,7 +478,7 @@ async def back_handler(message: types.Message):
     user_state = user_states.get(user_id, {})
     mode = user_state.get("mode")
 
-    if mode in ["treble_quiz", "bass_quiz", "clef_quiz"]:
+    if mode in ["treble_quiz", "bass_quiz", "keyboard_quiz", "clef_quiz"]:
         score = user_state.get("score", 0)
         total = user_state.get("total", 0)
 
@@ -430,6 +486,8 @@ async def back_handler(message: types.Message):
             quiz_name = "скрипичном ключе"
         elif mode == "bass_quiz":
             quiz_name = "басовом ключе"
+        elif mode == "keyboard_quiz":
+            quiz_name = "клавиатуре"
         else:
             quiz_name = "музыкальным ключам"
 
