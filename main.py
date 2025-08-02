@@ -181,6 +181,16 @@ KEYBOARD_NOTES = {
     "до2": {"image_path": str(MEDIA_DIR / "keyboard/keyboard_do2.jpg"), "octave": ""}
 }
 
+NOTE_LETTERS = {
+    "C": {"image_path": str(MEDIA_DIR / "note_letters/note_C.png"), "name": "До (C)"},
+    "D": {"image_path": str(MEDIA_DIR / "note_letters/note_D.png"), "name": "Ре (D)"},
+    "E": {"image_path": str(MEDIA_DIR / "note_letters/note_E.png"), "name": "Ми (E)"},
+    "F": {"image_path": str(MEDIA_DIR / "note_letters/note_F.png"), "name": "Фа (F)"},
+    "G": {"image_path": str(MEDIA_DIR / "note_letters/note_G.png"), "name": "Соль (G)"},
+    "A": {"image_path": str(MEDIA_DIR / "note_letters/note_A.png"), "name": "Ля (A)"},
+    "B": {"image_path": str(MEDIA_DIR / "note_letters/note_B.png"), "name": "Си (B)"}
+}
+
 # Добавляем обработчик для раздела клавиатуры
 @dp.message(F.text == "Клавиатура")
 async def start_keyboard_quiz(message: types.Message):
@@ -471,14 +481,108 @@ async def check_note_answer(message: types.Message):
     else:
         await send_random_keyboard_note(message)
 
+        def get_note_letters_keyboard():
+            return ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="C"), KeyboardButton(text="D"), KeyboardButton(text="E")],
+                    [KeyboardButton(text="F"), KeyboardButton(text="G"), KeyboardButton(text="A")],
+                    [KeyboardButton(text="B"), KeyboardButton(text="Назад")]
+                ],
+                resize_keyboard=True
+            )
 
+
+def get_note_letters_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="C"), KeyboardButton(text="D"), KeyboardButton(text="E")],
+            [KeyboardButton(text="F"), KeyboardButton(text="G"), KeyboardButton(text="A")],
+            [KeyboardButton(text="B"), KeyboardButton(text="Назад")]
+        ],
+        resize_keyboard=True
+    )
+
+
+# Обработчик для раздела "Обозначение нот"
+@dp.message(F.text == "Обозначение нот")
+async def start_note_letters_quiz(message: types.Message):
+    user_states[message.from_user.id] = {
+        "mode": "note_letters_quiz",
+        "score": 0,
+        "total": 0,
+        "current_note": None
+    }
+    await message.answer(
+        "🔤 Викторина по буквенным обозначениям нот!\n"
+        "Я покажу ноту - вы определяете её буквенное обозначение.",
+        reply_markup=get_note_letters_keyboard()
+    )
+    await send_random_note_letter(message)
+
+
+async def send_random_note_letter(message: types.Message):
+    user_id = message.from_user.id
+    if user_id not in user_states or user_states[user_id].get("mode") != "note_letters_quiz":
+        return
+
+    note_letter, note_data = random.choice(list(NOTE_LETTERS.items()))
+    user_states[user_id]["current_note"] = note_letter
+
+    try:
+        with open(note_data["image_path"], 'rb') as photo:
+            await message.answer_photo(
+                types.BufferedInputFile(photo.read(), filename="note_letter.png"),
+                caption="Какое буквенное обозначение этой ноты?",
+                reply_markup=get_note_letters_keyboard()
+            )
+    except Exception as e:
+        logging.error(f"Ошибка загрузки изображения ноты: {e}")
+        await message.answer(
+            f"Нота: {note_data['name']}",
+            reply_markup=get_note_letters_keyboard()
+        )
+
+
+# Обработчик ответов для буквенных обозначений
+@dp.message(F.text.in_(["C", "D", "E", "F", "G", "A", "B"]))
+async def check_note_letter_answer(message: types.Message):
+    user_id = message.from_user.id
+    user_state = user_states.get(user_id, {})
+    mode = user_state.get("mode")
+
+    if mode != "note_letters_quiz":
+        return
+
+    current_note = user_state.get("current_note")
+    if not current_note:
+        await message.answer("Ошибка! Начните викторину заново")
+        return
+
+    user_answer = message.text
+    correct_note = current_note
+    note_name = NOTE_LETTERS[correct_note]["name"]
+
+    user_states[user_id]["total"] += 1
+
+    if user_answer == correct_note:
+        user_states[user_id]["score"] += 1
+        response = f"✅ Верно! Это нота {note_name}"
+    else:
+        response = f"❌ Неверно! Это нота {note_name}"
+
+    await message.answer(response, reply_markup=get_note_letters_keyboard())
+    await asyncio.sleep(1)
+    await send_random_note_letter(message)
+
+
+# Обновляем обработчик "Назад" для учета новой викторины
 @dp.message(F.text == "Назад")
 async def back_handler(message: types.Message):
     user_id = message.from_user.id
     user_state = user_states.get(user_id, {})
     mode = user_state.get("mode")
 
-    if mode in ["treble_quiz", "bass_quiz", "keyboard_quiz", "clef_quiz"]:
+    if mode in ["treble_quiz", "bass_quiz", "keyboard_quiz", "clef_quiz", "note_letters_quiz"]:
         score = user_state.get("score", 0)
         total = user_state.get("total", 0)
 
@@ -488,6 +592,8 @@ async def back_handler(message: types.Message):
             quiz_name = "басовом ключе"
         elif mode == "keyboard_quiz":
             quiz_name = "клавиатуре"
+        elif mode == "note_letters_quiz":
+            quiz_name = "буквенным обозначениям нот"
         else:
             quiz_name = "музыкальным ключам"
 
