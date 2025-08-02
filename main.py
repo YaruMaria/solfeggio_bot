@@ -58,6 +58,22 @@ CREATE TABLE IF NOT EXISTS music_progress (
 );
 ''')
 
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS voice_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    username TEXT,
+    first_name TEXT,
+    last_name TEXT,
+    song_name TEXT,
+    voice_file_id TEXT,
+    submission_time TEXT,
+    status TEXT DEFAULT 'pending',
+    FOREIGN KEY (user_id) REFERENCES users (user_id)
+);
+''')
+conn.commit()
+
 CLEFS_DATA = {
     "treble": {
         "name": "Скрипичный ключ",
@@ -114,6 +130,7 @@ def get_music_keyboard():
             [KeyboardButton(text="Клавиатура")],
             [KeyboardButton(text="Обозначение нот")],
             [KeyboardButton(text="Ноты на слух")],
+            [KeyboardButton(text="Ноты в песнях")],
             [KeyboardButton(text="Назад")]
         ],
         resize_keyboard=True
@@ -223,6 +240,203 @@ AUDIO_NOTES = {
     "си": {"audio_path": str(AUDIO_DIR / "3f27a7.mp3"), "octave": "первой октавы"}
 }
 
+SONGS = {
+    "Во поле береза стояла": {
+        "image_path": str(MEDIA_DIR / "songs/berezka.png"),
+        "notes": "",
+        "level": "1 класс"
+    },
+    "В лесу родилась ёлочка": {
+        "image_path": str(MEDIA_DIR / "songs/elochka.png"),
+        "notes": "",
+        "level": "1 класс"
+    },
+    "Жили у бабуси": {
+        "image_path": str(MEDIA_DIR / "songs/gusi.png"),
+        "notes": "",
+        "level": "1 класс"
+    },
+    "Как под горкой": {
+        "image_path": str(MEDIA_DIR / "songs/gora.png"),
+        "notes": "",
+        "level": "1 класс"
+    },
+    "Маки": {
+        "image_path": str(MEDIA_DIR / "songs/maki.png"),
+        "notes": "",
+        "level": "1 класс"
+    },
+    "Савка и Гриша": {
+        "image_path": str(MEDIA_DIR / "songs/savka.png"),
+        "notes": "",
+        "level": "1 класс"
+    },
+    "Василек": {
+        "image_path": str(MEDIA_DIR / "songs/vasilok.png"),
+        "notes": "",
+        "level": "1 класс"
+    },
+    "Качи": {
+        "image_path": str(MEDIA_DIR / "songs/kachi.png"),
+        "notes": "",
+        "level": "1 класс"
+    },
+    "Я гуляю": {
+        "image_path": str(MEDIA_DIR / "songs/ya_gulay.png"),
+        "notes": "",
+        "level": "1 класс"
+    },
+    "Песенка без слов": {
+    "image_path": str(MEDIA_DIR / "songs/bes_slov.png"),
+        "notes": "",
+        "level": "1 класс"
+    },
+
+}
+
+@dp.message(F.text == "Ноты в песнях")
+async def songs_menu(message: types.Message):
+    await message.answer(
+        "🎶 Выбери песню и спой её по нотам!",
+        reply_markup=get_songs_keyboard()
+    )
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+def get_review_keyboard(submission_id):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="👍 Отлично (5)", callback_data=f"review_{submission_id}_5"),
+            InlineKeyboardButton(text="😊 Хорошо (4)", callback_data=f"review_{submission_id}_4"),
+        ],
+        [
+            InlineKeyboardButton(text="🤔 Удовлетворительно (3)", callback_data=f"review_{submission_id}_3"),
+            InlineKeyboardButton(text="👎 Надо доработать (2)", callback_data=f"review_{submission_id}_2"),
+        ]
+    ])
+
+def get_songs_keyboard():
+    songs_buttons = [
+        [KeyboardButton(text=song_name)] for song_name in SONGS.keys()
+    ]
+    songs_buttons.append([KeyboardButton(text="Назад")])
+    return ReplyKeyboardMarkup(keyboard=songs_buttons, resize_keyboard=True)
+
+
+@dp.message(F.text.in_(SONGS.keys()))
+async def send_song_notes(message: types.Message):
+    song_name = message.text
+    song_data = SONGS[song_name]
+
+    try:
+        with open(song_data["image_path"], 'rb') as photo:
+            await message.answer_photo(
+                types.BufferedInputFile(photo.read(), filename="song.png"),
+                caption=f"🎵 {song_name}\n"
+                        f"Ноты: {song_data['notes']}\n\n"
+                        f"Спой эту мелодию и отправь голосовое сообщение!",
+                reply_markup=ReplyKeyboardMarkup(
+                    keyboard=[[KeyboardButton(text="Отмена")]],
+                    resize_keyboard=True
+                )
+            )
+        # Сохраняем текущую песню в состоянии пользователя
+        user_states[message.from_user.id] = {
+            "mode": "song_recording",
+            "song_name": song_name
+        }
+    except Exception as e:
+        await message.answer("Ошибка загрузки нот. Попробуйте позже.")
+        logging.error(f"Ошибка загрузки песни: {e}")
+
+@dp.message(F.voice)
+async def handle_voice(message: types.Message):
+    user_id = message.from_user.id
+    user_state = user_states.get(user_id, {})
+
+    if user_state.get("mode") != "song_recording":
+        return  # Игнорируем голосовые не из этого раздела
+
+    song_name = user_state.get("song_name")
+    voice_file_id = message.voice.file_id
+
+    # Сохраняем голосовое в базу
+    cursor.execute(
+        '''INSERT INTO voice_notes 
+        (user_id, username, first_name, last_name, song_name, voice_file_id, submission_time)
+        VALUES (?, ?, ?, ?, ?, ?, ?)''',
+        (
+            user_id,
+            message.from_user.username,
+            message.from_user.first_name,
+            message.from_user.last_name,
+            song_name,
+            voice_file_id,
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        )
+    )
+    conn.commit()
+    submission_id = cursor.lastrowid  # Получаем ID добавленной записи
+
+    # Отправляем подтверждение ученику
+    await message.answer(
+        "✅ Твоё голосовое отправлено учителю на проверку!\n"
+        "Скоро получишь обратную связь.",
+        reply_markup=get_music_keyboard()
+    )
+
+    # Отправляем голосовое учителю (вам) с кнопками оценки
+    admin_chat_id = "5157087391"  # Ваш ID
+    try:
+        await bot.send_voice(
+            chat_id=admin_chat_id,
+            voice=voice_file_id,
+            caption=f"🎵 Новое задание (#{submission_id}) от @{message.from_user.username}:\n"
+                    f"Песня: {song_name}\n"
+                    f"Ученик: {message.from_user.full_name}\n"
+                    f"Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+            reply_markup=get_review_keyboard(submission_id)  # Добавляем кнопки оценки
+        )
+    except Exception as e:
+        logging.error(f"Ошибка отправки голосового учителю: {e}")
+        await message.answer("Произошла ошибка при отправке работы учителю. Пожалуйста, сообщите об этом.")
+
+    # Сбрасываем состояние пользователя
+    user_states[user_id] = {}
+
+@dp.callback_query(F.data.startswith("review_"))
+async def process_review(callback: types.CallbackQuery):
+    _, submission_id, grade = callback.data.split('_')
+
+    # Обновляем статус в базе
+    cursor.execute(
+        "UPDATE voice_notes SET status = ? WHERE id = ?",
+        (f"Оценено: {grade}", submission_id)
+    )
+    conn.commit()
+
+    # Получаем данные об ученике
+    cursor.execute(
+        "SELECT user_id, song_name FROM voice_notes WHERE id = ?",
+        (submission_id,)
+    )
+    user_id, song_name = cursor.fetchone()
+
+    # Отправляем уведомление ученику
+    feedback = {
+        '5': "🎉 Отлично! 5 баллов!",
+        '4': "😊 Хорошо! 4 балла!",
+        '3': "🤔 Удовлетворительно. 3 балла.",
+        '2': "👎 Нужно доработать. 2 балла."
+    }.get(grade, "Ваша работа оценена.")
+
+    await bot.send_message(
+        chat_id=user_id,
+        text=f"Ваша работа по песне '{song_name}':\n{feedback}"
+    )
+
+    # Убираем кнопки у учителя
+    await callback.answer("Оценка сохранена")
+    await callback.message.edit_reply_markup()
 
 # Функция для переименования аудиофайлов
 def rename_audio_files():
