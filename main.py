@@ -2,6 +2,7 @@ import asyncio
 import logging
 import sqlite3
 import random
+import hashlib
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -27,10 +28,15 @@ cursor = conn.cursor()
 # Получаем абсолютный путь к папке с ботом
 BASE_DIR = Path(__file__).parent
 MEDIA_DIR = BASE_DIR / "media"
+AUDIO_DIR = MEDIA_DIR / "audio_notes"
 
 if not MEDIA_DIR.exists():
     MEDIA_DIR.mkdir()
     logging.info(f"Создана папка для медиа: {MEDIA_DIR}")
+
+if not AUDIO_DIR.exists():
+    AUDIO_DIR.mkdir()
+    logging.info(f"Создана папка для аудио: {AUDIO_DIR}")
 
 # Создание таблиц
 cursor.execute('''
@@ -107,6 +113,20 @@ def get_music_keyboard():
             [KeyboardButton(text="Ноты в басовом ключе")],
             [KeyboardButton(text="Клавиатура")],
             [KeyboardButton(text="Обозначение нот")],
+            [KeyboardButton(text="Ноты на слух")],
+            [KeyboardButton(text="Назад")]
+        ],
+        resize_keyboard=True
+    )
+
+
+def get_first_class_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Расписание")],
+            [KeyboardButton(text="Домашние задания")],
+            [KeyboardButton(text="Учебные материалы")],
+            [KeyboardButton(text="Ноты")],
             [KeyboardButton(text="Назад")]
         ],
         resize_keyboard=True
@@ -135,6 +155,7 @@ def get_note_quiz_keyboard():
     )
 
 
+# Словари с данными
 NOTES_TREBLE = {
     "до": {"image_path": str(MEDIA_DIR / "treble_nots/treble_do.png"), "octave": "первой октавы"},
     "ре": {"image_path": str(MEDIA_DIR / "treble_nots/treble_re.png"), "octave": "первой октавы"},
@@ -191,45 +212,45 @@ NOTE_LETTERS = {
     "B": {"image_path": str(MEDIA_DIR / "note_letters/note_B.png"), "name": "Си (B)"}
 }
 
-# Добавляем обработчик для раздела клавиатуры
-@dp.message(F.text == "Клавиатура")
-async def start_keyboard_quiz(message: types.Message):
-    user_states[message.from_user.id] = {
-        "mode": "keyboard_quiz",
-        "score": 0,
-        "total": 0,
-        "current_note": None
+# Защищенные имена аудиофайлов
+AUDIO_NOTES = {
+    "до": {"audio_path": str(AUDIO_DIR / "3f27a6.mp3"), "octave": "первой октавы"},
+    "ре": {"audio_path": str(AUDIO_DIR / "8b1a99.mp3"), "octave": "первой октавы"},
+    "ми": {"audio_path": str(AUDIO_DIR / "e4da3b.mp3"), "octave": "первой октавы"},
+    "фа": {"audio_path": str(AUDIO_DIR / "a87ff6.mp3"), "octave": "первой октавы"},
+    "соль": {"audio_path": str(AUDIO_DIR / "e4da3c.mp3"), "octave": "первой октавы"},
+    "ля": {"audio_path": str(AUDIO_DIR / "8b1a98.mp3"), "octave": "первой октавы"},
+    "си": {"audio_path": str(AUDIO_DIR / "3f27a7.mp3"), "octave": "первой октавы"}
+}
+
+
+# Функция для переименования аудиофайлов
+def rename_audio_files():
+    audio_mapping = {
+        "do.mp3": "3f27a6.mp3",
+        "re.mp3": "8b1a99.mp3",
+        "mi.mp3": "e4da3b.mp3",
+        "fa.mp3": "a87ff6.mp3",
+        "sol.mp3": "e4da3c.mp3",
+        "la.mp3": "8b1a98.mp3",
+        "si.mp3": "3f27a7.mp3"
     }
-    await message.answer(
-        "🎹 Викторина по клавиатуре!\n"
-        "Я покажу клавишу - вы определяете её ноту.",
-        reply_markup=get_note_quiz_keyboard()  # Используем ту же клавиатуру с нотами
-    )
-    await send_random_keyboard_note(message)
 
-async def send_random_keyboard_note(message: types.Message):
-    user_id = message.from_user.id
-    if user_id not in user_states or user_states[user_id].get("mode") != "keyboard_quiz":
-        return
+    for original, new_name in audio_mapping.items():
+        original_path = AUDIO_DIR / original
+        if original_path.exists():
+            original_path.rename(AUDIO_DIR / new_name)
+            logging.info(f"Переименован {original} в {new_name}")
 
-    note_name, note_data = random.choice(list(KEYBOARD_NOTES.items()))
-    user_states[user_id]["current_note"] = note_name
 
-    try:
-        with open(note_data["image_path"], 'rb') as photo:
-            await message.answer_photo(
-                types.BufferedInputFile(photo.read(), filename="keyboard.png"),
-                caption="Какая это нота?",
-                reply_markup=get_note_quiz_keyboard()
-            )
-    except Exception as e:
-        logging.error(f"Ошибка загрузки изображения клавиатуры: {e}")
-        await message.answer(
-            "Изображение клавиши не загружено",
-            reply_markup=get_note_quiz_keyboard()
-        )
+# Проверяем и переименовываем файлы при старте
+if AUDIO_DIR.exists():
+    rename_audio_files()
+else:
+    logging.warning(f"Папка с аудио не найдена: {AUDIO_DIR}")
 
-# Основные обработчики команд
+
+# Обработчики команд
 @dp.message(Command('start'))
 async def start(message: types.Message):
     user_id = message.from_user.id
@@ -264,11 +285,28 @@ async def help_command(message: types.Message):
 async def class_handler(message: types.Message):
     class_num = message.text.split(" ")[0]
     user_states[message.from_user.id] = {"current_class": class_num}
-    await message.answer(
-        f"Выберите раздел для класса {class_num}:",
-        reply_markup=get_class_keyboard()
-    )
 
+    if class_num == "1":
+        await message.answer(
+            f"Выберите раздел для 1 класса:",
+            reply_markup=get_first_class_keyboard()
+        )
+    else:
+        await message.answer(
+            f"Выберите раздел для класса {class_num}:",
+            reply_markup=get_class_keyboard()
+        )
+
+def get_note_letters_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="C"), KeyboardButton(text="D")],
+            [KeyboardButton(text="E"), KeyboardButton(text="F")],
+            [KeyboardButton(text="G"), KeyboardButton(text="A")],
+            [KeyboardButton(text="B"), KeyboardButton(text="Назад")]
+        ],
+        resize_keyboard=True
+    )
 
 # Обработчики музыкального раздела
 @dp.message(F.text == "Ноты")
@@ -434,76 +472,45 @@ async def send_random_bass_note(message: types.Message):
         )
 
 
-
-@dp.message(F.text.in_(["До", "Ре", "Ми", "Фа", "Соль", "Ля", "Си"]))
-async def check_note_answer(message: types.Message):
-    user_id = message.from_user.id
-    user_state = user_states.get(user_id, {})
-    mode = user_state.get("mode")
-
-    if mode not in ["treble_quiz", "bass_quiz", "keyboard_quiz"]:
-        await message.answer("Пожалуйста, начните викторину через меню")
-        return
-
-    current_note = user_state.get("current_note")
-    if not current_note:
-        await message.answer("Ошибка! Начните викторину заново")
-        return
-
-    # Определяем правильный ответ в зависимости от режима
-    if mode == "treble_quiz":
-        correct_note = current_note.replace("2", "")
-        octave_info = NOTES_TREBLE[current_note]["octave"]
-    elif mode == "bass_quiz":
-        correct_note = current_note.split("_")[0]
-        octave_info = NOTES_BASS[current_note]["octave"]
-    else:  # keyboard_quiz
-        correct_note = current_note.replace("2", "")
-        octave_info = ""
-
-    user_answer = message.text.lower()
-    user_states[user_id]["total"] += 1
-
-    if user_answer == correct_note:
-        user_states[user_id]["score"] += 1
-        response = f"✅ Верно! Это нота {correct_note}{' ' + octave_info if octave_info else ''}"
-    else:
-        response = f"❌ Неверно! Это нота {correct_note}{' ' + octave_info if octave_info else ''}"
-
-    await message.answer(response, reply_markup=get_note_quiz_keyboard())
-    await asyncio.sleep(1)
-
-    # Отправляем следующий вопрос в зависимости от режима
-    if mode == "treble_quiz":
-        await send_random_treble_note(message)
-    elif mode == "bass_quiz":
-        await send_random_bass_note(message)
-    else:
-        await send_random_keyboard_note(message)
-
-        def get_note_letters_keyboard():
-            return ReplyKeyboardMarkup(
-                keyboard=[
-                    [KeyboardButton(text="C"), KeyboardButton(text="D"), KeyboardButton(text="E")],
-                    [KeyboardButton(text="F"), KeyboardButton(text="G"), KeyboardButton(text="A")],
-                    [KeyboardButton(text="B"), KeyboardButton(text="Назад")]
-                ],
-                resize_keyboard=True
-            )
-
-
-def get_note_letters_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="C"), KeyboardButton(text="D"), KeyboardButton(text="E")],
-            [KeyboardButton(text="F"), KeyboardButton(text="G"), KeyboardButton(text="A")],
-            [KeyboardButton(text="B"), KeyboardButton(text="Назад")]
-        ],
-        resize_keyboard=True
+@dp.message(F.text == "Клавиатура")
+async def start_keyboard_quiz(message: types.Message):
+    user_states[message.from_user.id] = {
+        "mode": "keyboard_quiz",
+        "score": 0,
+        "total": 0,
+        "current_note": None
+    }
+    await message.answer(
+        "🎹 Викторина по клавиатуре!\n"
+        "Я покажу клавишу - вы определяете её ноту.",
+        reply_markup=get_note_quiz_keyboard()
     )
+    await send_random_keyboard_note(message)
 
 
-# Обработчик для раздела "Обозначение нот"
+async def send_random_keyboard_note(message: types.Message):
+    user_id = message.from_user.id
+    if user_id not in user_states or user_states[user_id].get("mode") != "keyboard_quiz":
+        return
+
+    note_name, note_data = random.choice(list(KEYBOARD_NOTES.items()))
+    user_states[user_id]["current_note"] = note_name
+
+    try:
+        with open(note_data["image_path"], 'rb') as photo:
+            await message.answer_photo(
+                types.BufferedInputFile(photo.read(), filename="keyboard.png"),
+                caption="Какая это нота?",
+                reply_markup=get_note_quiz_keyboard()
+            )
+    except Exception as e:
+        logging.error(f"Ошибка загрузки изображения клавиатуры: {e}")
+        await message.answer(
+            "Изображение клавиши не загружено",
+            reply_markup=get_note_quiz_keyboard()
+        )
+
+
 @dp.message(F.text == "Обозначение нот")
 async def start_note_letters_quiz(message: types.Message):
     user_states[message.from_user.id] = {
@@ -543,7 +550,101 @@ async def send_random_note_letter(message: types.Message):
         )
 
 
-# Обработчик ответов для буквенных обозначений
+@dp.message(F.text == "Ноты на слух")
+async def start_audio_notes_quiz(message: types.Message):
+    user_states[message.from_user.id] = {
+        "mode": "audio_notes_quiz",
+        "score": 0,
+        "total": 0,
+        "current_note": None
+    }
+    await message.answer(
+        "🎵 Викторина по нотам на слух!\n"
+        "Я сыграю ноту - вы определяете её название.",
+        reply_markup=get_note_quiz_keyboard()
+    )
+    await send_random_audio_note(message)
+
+
+async def send_random_audio_note(message: types.Message):
+    user_id = message.from_user.id
+    if user_id not in user_states or user_states[user_id].get("mode") != "audio_notes_quiz":
+        return
+
+    note_name, note_data = random.choice(list(AUDIO_NOTES.items()))
+    user_states[user_id]["current_note"] = note_name
+
+    try:
+        audio = types.FSInputFile(note_data["audio_path"])
+        await message.answer_audio(
+            audio,
+            reply_markup=get_note_quiz_keyboard()
+        )
+    except Exception as e:
+        logging.error(f"Ошибка загрузки аудио: {e}")
+        await message.answer(
+            "Не удалось загрузить аудио, попробуйте еще раз",
+            reply_markup=get_note_quiz_keyboard()
+        )
+
+
+@dp.message(F.text.in_(["До", "Ре", "Ми", "Фа", "Соль", "Ля", "Си"]))
+async def check_note_answer(message: types.Message):
+    user_id = message.from_user.id
+    user_state = user_states.get(user_id, {})
+    mode = user_state.get("mode")
+
+    if mode not in ["treble_quiz", "bass_quiz", "keyboard_quiz", "note_letters_quiz", "audio_notes_quiz"]:
+        await message.answer("Пожалуйста, начните викторину через меню")
+        return
+
+    current_note = user_state.get("current_note")
+    if not current_note:
+        await message.answer("Ошибка! Начните викторину заново")
+        return
+
+    # Определяем правильный ответ в зависимости от режима
+    if mode == "treble_quiz":
+        correct_note = current_note.replace("2", "")
+        octave_info = NOTES_TREBLE[current_note]["octave"]
+    elif mode == "bass_quiz":
+        correct_note = current_note.split("_")[0]
+        octave_info = NOTES_BASS[current_note]["octave"]
+    elif mode == "keyboard_quiz":
+        correct_note = current_note.replace("2", "")
+        octave_info = ""
+    elif mode == "note_letters_quiz":
+        correct_note = current_note
+        octave_info = NOTE_LETTERS[current_note]["name"]
+    else:  # audio_notes_quiz
+        correct_note = current_note
+        octave_info = ""
+
+    user_answer = message.text.lower()
+    user_states[user_id]["total"] += 1
+
+    if user_answer == correct_note:
+        user_states[user_id]["score"] += 1
+        response = f"✅ Верно! Это нота {correct_note}"
+    else:
+        response = f"❌ Неверно! Это нота {correct_note}"
+
+    await message.answer(response, reply_markup=get_note_quiz_keyboard())
+    await asyncio.sleep(1)
+
+    # Отправляем следующий вопрос в зависимости от режима
+    if mode == "treble_quiz":
+        await send_random_treble_note(message)
+    elif mode == "bass_quiz":
+        await send_random_bass_note(message)
+    elif mode == "keyboard_quiz":
+        await send_random_keyboard_note(message)
+    elif mode == "note_letters_quiz":
+        await send_random_note_letter(message)
+    else:
+        await send_random_audio_note(message)
+
+
 @dp.message(F.text.in_(["C", "D", "E", "F", "G", "A", "B"]))
 async def check_note_letter_answer(message: types.Message):
     user_id = message.from_user.id
@@ -575,14 +676,13 @@ async def check_note_letter_answer(message: types.Message):
     await send_random_note_letter(message)
 
 
-# Обновляем обработчик "Назад" для учета новой викторины
 @dp.message(F.text == "Назад")
 async def back_handler(message: types.Message):
     user_id = message.from_user.id
     user_state = user_states.get(user_id, {})
     mode = user_state.get("mode")
 
-    if mode in ["treble_quiz", "bass_quiz", "keyboard_quiz", "clef_quiz", "note_letters_quiz"]:
+    if mode in ["treble_quiz", "bass_quiz", "keyboard_quiz", "clef_quiz", "note_letters_quiz", "audio_notes_quiz"]:
         score = user_state.get("score", 0)
         total = user_state.get("total", 0)
 
@@ -594,6 +694,8 @@ async def back_handler(message: types.Message):
             quiz_name = "клавиатуре"
         elif mode == "note_letters_quiz":
             quiz_name = "буквенным обозначениям нот"
+        elif mode == "audio_notes_quiz":
+            quiz_name = "нотам на слух"
         else:
             quiz_name = "музыкальным ключам"
 
