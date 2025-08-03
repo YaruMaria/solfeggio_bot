@@ -10,6 +10,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InputFile
 import os
 from pathlib import Path
 from config import BOT_TOKEN
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from enum import Enum
 
 # Настройка логирования
@@ -112,21 +113,21 @@ SCALE_DEGREES = {
 STABLE_DEGREES = {
     "до мажор": ["до", "ми", "соль"],
     "соль мажор": ["соль", "си", "ре"],
-    "ре мажор": ["ре", "фа#", "ля"],
-    "ля мажор": ["ля", "до#", "ми"],
-    "ми мажор": ["ми", "соль#", "си"],
-    "си мажор": ["си", "ре#", "фа#"],
+    "ре мажор": ["ре", "фа", "ля"],
+    "ля мажор": ["ля", "до", "ми"],
+    "ми мажор": ["ми", "соль", "си"],
+    "си мажор": ["си", "ре", "фа"],
     "фа мажор": ["фа", "ля", "до"],
     "ля минор": ["ля", "до", "ми"],
     "ми минор": ["ми", "соль", "си"],
-    "си минор": ["си", "ре", "фа#"],
-    "фа# минор": ["фа#", "ля", "до#"],
-    "до# минор": ["до#", "ми", "соль#"],
-    "соль# минор": ["соль#", "си", "ре#"],
+    "си минор": ["си", "ре", "фа"],
+    "фа# минор": ["фа", "ля", "до"],
+    "до# минор": ["до", "ми", "соль"],
+    "соль# минор": ["соль", "си", "ре"],
     "ре минор": ["ре", "фа", "ля"],
-    "соль минор": ["соль", "сиb", "ре"],
-    "до минор": ["до", "миb", "соль"],
-    "фа минор": ["фа", "ляb", "до"]
+    "соль минор": ["соль", "си", "ре"],
+    "до минор": ["до", "ми", "соль"],
+    "фа минор": ["фа", "ля", "до"]
 }
 
 conn.commit()
@@ -348,6 +349,7 @@ async def scale_menu(message: types.Message):
         keyboard=[
             [KeyboardButton(text="Ступени в гамме")],
             [KeyboardButton(text="Устойчивые ступени")],
+            [KeyboardButton(text="Неустойчивые ступени")],  # Добавляем новую кнопку
             [KeyboardButton(text="Назад")]
         ],
         resize_keyboard=True
@@ -509,8 +511,153 @@ SCALE_NOTES = {
     Scales.F_MAJOR: ["фа", "соль", "ля", "сиb", "до", "ре", "ми"]
 }
 
+UNSTABLE_DEGREES = {
+    "до мажор": ["ре", "фа", "ля", "си"],
+    "соль мажор": ["ля", "до", "ми", "фа"],
+    "ре мажор": ["ми", "соль", "си", "до"],
+    "ля мажор": ["си", "ре", "фа", "соль"],
+    "ми мажор": ["фа", "ля", "до", "ре"],
+    "си мажор": ["до", "ми", "соль", "ля"],
+    "фа мажор": ["соль", "си", "ре", "ми"],
+    "ля минор": ["си", "ре", "фа", "соль"],
+    "ми минор": ["фа", "ля", "до", "ре"],
+    "си минор": ["до", "ми", "соль", "ля"],
+    "фа# минор": ["соль", "си", "ре", "ми"],
+    "до# минор": ["ре", "фа", "ля", "си"],
+    "соль# минор": ["ля", "до", "ми", "фа"],
+    "ре минор": ["ми", "соль", "си", "до"],
+    "соль минор": ["ля", "до", "ми", "фа"],
+    "до минор": ["ре", "фа", "ля", "си"],
+    "фа минор": ["соль", "си", "ре", "ми"]
+}
 
-# Функция для переименования аудиофайлов
+# Добавляем обработчик для неустойчивых ступеней
+@dp.message(F.text == "Неустойчивые ступени")
+async def unstable_degrees_game(message: types.Message):
+    user_id = message.from_user.id
+
+    # Получаем список всех возможных тональностей
+    all_tonalities = list(UNSTABLE_DEGREES.keys())
+
+    # Если пользователь уже играл, исключаем предыдущую тональность
+    previous_tonality = user_states.get(user_id, {}).get("tonality")
+    available_tonalities = [t for t in all_tonalities if
+                            t != previous_tonality] if previous_tonality else all_tonalities
+
+    # Выбираем случайную тональность из доступных
+    tonality = random.choice(available_tonalities)
+
+    # Сохраняем состояние
+    user_states[user_id] = {
+        "mode": "unstable_degrees",
+        "tonality": tonality,
+        "correct_answers": UNSTABLE_DEGREES[tonality],
+        "selected_notes": [],
+        "score": user_states.get(user_id, {}).get("score", 0),
+        "total": user_states.get(user_id, {}).get("total", 0) + 1
+    }
+
+    await message.answer(
+        f"🎵 Выберите НЕУСТОЙЧИВЫЕ ступени в тональности {tonality}:\n"
+        "(Нажмите 4 ноты, которые считаете правильными)",
+        reply_markup=get_unstable_degrees_keyboard()
+    )
+
+# Клавиатура для неустойчивых ступеней (4 ноты нужно выбрать)
+def get_unstable_degrees_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="до"), KeyboardButton(text="ре"), KeyboardButton(text="ми")],
+            [KeyboardButton(text="фа"), KeyboardButton(text="соль"), KeyboardButton(text="ля")],
+            [KeyboardButton(text="си"), KeyboardButton(text="Готово"), KeyboardButton(text="Назад")]
+        ],
+        resize_keyboard=True
+    )
+
+# Обработчик выбора нот (используем тот же, что и для устойчивых ступеней)
+@dp.message(F.text.in_(["до", "ре", "ми", "фа", "соль", "ля", "си"]))
+async def process_note_selection(message: types.Message):
+    user_id = message.from_user.id
+    user_state = user_states.get(user_id, {})
+
+    if user_state.get("mode") not in ["stable_degrees", "unstable_degrees"]:
+        return
+
+    selected_note = message.text.lower()
+    selected_notes = user_state.get("selected_notes", [])
+    max_notes = 3 if user_state.get("mode") == "stable_degrees" else 4  # Для неустойчивых - 4 ноты
+
+    if selected_note in selected_notes:
+        # Если нота уже выбрана - убираем её
+        selected_notes.remove(selected_note)
+        await message.answer(f"Нота {selected_note} убрана из выбора")
+    else:
+        if len(selected_notes) >= max_notes:
+            await message.answer(f"Вы уже выбрали {max_notes} ноты. Нажмите 'Готово' для проверки")
+            return
+        selected_notes.append(selected_note)
+        await message.answer(f"Добавлена нота {selected_note}")
+
+    # Обновляем состояние
+    user_state["selected_notes"] = selected_notes
+    user_states[user_id] = user_state
+
+    # Показываем текущий выбор
+    if selected_notes:
+        await message.answer(f"Выбрано: {', '.join(selected_notes)}")
+
+# Обработчик проверки ответа для неустойчивых ступеней
+@dp.message(F.text == "Готово")
+async def check_unstable_degrees(message: types.Message):
+    user_id = message.from_user.id
+    user_state = user_states.get(user_id, {})
+
+    if user_state.get("mode") != "unstable_degrees":
+        return
+
+    selected_notes = user_state.get("selected_notes", [])
+    correct_answers = user_state.get("correct_answers", [])
+    tonality = user_state.get("tonality", "")
+
+    if len(selected_notes) != 4:
+        await message.answer("Нужно выбрать ровно 4 ноты!")
+        return
+
+    # Проверяем, что все выбранные ноты есть в correct_answers
+    is_correct = all(note in correct_answers for note in selected_notes) and \
+                 len(selected_notes) == len(correct_answers)
+
+    # Обновляем статистику
+    if is_correct:
+        user_state["score"] += 1
+        response = (
+            "✅ Верно! Неустойчивые ступени в тональности "
+            f"{tonality}: {', '.join(correct_answers)}\n"
+            "(II, IV, VI и VII ступени)"
+        )
+    else:
+        # Показываем конкретные ошибки
+        wrong_notes = [n for n in selected_notes if n not in correct_answers]
+        missing_notes = [n for n in correct_answers if n not in selected_notes]
+
+        feedback = []
+        if wrong_notes:
+            feedback.append(f"Неправильно: {', '.join(wrong_notes)}")
+        if missing_notes:
+            feedback.append(f"Пропущено: {', '.join(missing_notes)}")
+
+        response = (
+            "❌ Есть ошибки:\n"
+            f"{'; '.join(feedback)}\n\n"
+            f"Правильный ответ: {', '.join(correct_answers)}\n"
+            "(Неустойчивые ступени - это II, IV, VI и VII ступени гаммы)"
+        )
+
+    user_states[user_id] = user_state
+    await message.answer(response)
+    await asyncio.sleep(2)
+    await unstable_degrees_game(message)  # Новый вопрос
+
 def rename_audio_files():
     audio_mapping = {
         "do.mp3": "3f27a6.mp3",
