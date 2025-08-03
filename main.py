@@ -109,11 +109,152 @@ SCALE_DEGREES = {
     7: "VII (восходящий вводный)"
 }
 
+STABLE_DEGREES = {
+    "до мажор": ["до", "ми", "соль"],
+    "соль мажор": ["соль", "си", "ре"],
+    "ре мажор": ["ре", "фа#", "ля"],
+    "ля мажор": ["ля", "до#", "ми"],
+    "ми мажор": ["ми", "соль#", "си"],
+    "си мажор": ["си", "ре#", "фа#"],
+    "фа мажор": ["фа", "ля", "до"],
+    "ля минор": ["ля", "до", "ми"],
+    "ми минор": ["ми", "соль", "си"],
+    "си минор": ["си", "ре", "фа#"],
+    "фа# минор": ["фа#", "ля", "до#"],
+    "до# минор": ["до#", "ми", "соль#"],
+    "соль# минор": ["соль#", "си", "ре#"],
+    "ре минор": ["ре", "фа", "ля"],
+    "соль минор": ["соль", "сиb", "ре"],
+    "до минор": ["до", "миb", "соль"],
+    "фа минор": ["фа", "ляb", "до"]
+}
+
 conn.commit()
 
 # Хранилища состояний
 user_states = {}
 
+
+# Добавляем в обработчики команд
+@dp.message(F.text == "Устойчивые ступени")
+async def stable_degrees_game(message: types.Message):
+    user_id = message.from_user.id
+
+    # Получаем список всех возможных тональностей
+    all_tonalities = list(STABLE_DEGREES.keys())
+
+    # Если пользователь уже играл, исключаем предыдущую тональность
+    previous_tonality = user_states.get(user_id, {}).get("tonality")
+    available_tonalities = [t for t in all_tonalities if
+                            t != previous_tonality] if previous_tonality else all_tonalities
+
+    # Выбираем случайную тональность из доступных
+    tonality = random.choice(available_tonalities)
+
+    # Сохраняем состояние
+    user_states[user_id] = {
+        "mode": "stable_degrees",
+        "tonality": tonality,
+        "correct_answers": STABLE_DEGREES[tonality],
+        "selected_notes": [],
+        "score": user_states.get(user_id, {}).get("score", 0),
+        "total": user_states.get(user_id, {}).get("total", 0) + 1
+    }
+
+    await message.answer(
+        f"🎵 Выберите УСТОЙЧИВЫЕ ступени в тональности {tonality}:\n"
+        "(Нажмите 3 ноты, которые считаете правильными)",
+        reply_markup=get_stable_degrees_keyboard()
+    )
+
+
+def get_stable_degrees_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="до"), KeyboardButton(text="ре"), KeyboardButton(text="ми")],
+            [KeyboardButton(text="фа"), KeyboardButton(text="соль"), KeyboardButton(text="ля")],
+            [KeyboardButton(text="си"), KeyboardButton(text="Готово"), KeyboardButton(text="Назад")]
+        ],
+        resize_keyboard=True
+    )
+
+
+@dp.message(F.text.in_(["до", "ре", "ми", "фа", "соль", "ля", "си"]))
+async def process_note_selection(message: types.Message):
+    user_id = message.from_user.id
+    user_state = user_states.get(user_id, {})
+
+    if user_state.get("mode") != "stable_degrees":
+        return
+
+    selected_note = message.text.lower()
+    selected_notes = user_state.get("selected_notes", [])
+
+    if selected_note in selected_notes:
+        # Если нота уже выбрана - убираем её
+        selected_notes.remove(selected_note)
+        await message.answer(f"Нота {selected_note} убрана из выбора")
+    else:
+        if len(selected_notes) >= 3:
+            await message.answer("Вы уже выбрали 3 ноты. Нажмите 'Готово' для проверки")
+            return
+        selected_notes.append(selected_note)
+        await message.answer(f"Добавлена нота {selected_note}")
+
+    # Обновляем состояние
+    user_state["selected_notes"] = selected_notes
+    user_states[user_id] = user_state
+
+    # Показываем текущий выбор
+    if selected_notes:
+        await message.answer(f"Выбрано: {', '.join(selected_notes)}")
+
+
+@dp.message(F.text == "Готово")
+async def check_stable_degrees(message: types.Message):
+    user_id = message.from_user.id
+    user_state = user_states.get(user_id, {})
+
+    if user_state.get("mode") != "stable_degrees":
+        return
+
+    selected_notes = user_state.get("selected_notes", [])
+    correct_answers = user_state.get("correct_answers", [])
+    tonality = user_state.get("tonality", "")
+
+    if len(selected_notes) != 3:
+        await message.answer("Нужно выбрать ровно 3 ноты!")
+        return
+
+    # Проверяем ответ
+    is_correct = set(selected_notes) == set(correct_answers)
+
+    # Обновляем статистику
+    if is_correct:
+        user_state["score"] += 1
+    user_states[user_id] = user_state
+
+    if is_correct:
+        response = (
+            "✅ Поздравляю! Вы правильно определили устойчивые ступени!\n"
+            f"В тональности {tonality} устойчивые ступени: {', '.join(correct_answers)}\n"
+            "Переходим к следующему заданию..."
+        )
+    else:
+        response = (
+            "❌ К сожалению, это неверный ответ.\n"
+            f"В тональности {tonality} устойчивые ступени: {', '.join(correct_answers)}\n"
+            "(Устойчивые ступени - это I, III и V ступени гаммы)\n"
+            "Попробуем ещё раз!"
+        )
+
+    await message.answer(response)
+
+    # Задержка перед новым вопросом
+    await asyncio.sleep(2)
+
+    # Задаем новый вопрос с другой тональностью
+    await stable_degrees_game(message)
 
 # Основные клавиатуры
 def get_main_keyboard():
@@ -949,51 +1090,67 @@ async def handle_voice(message: types.Message):
     user_state = user_states.get(user_id, {})
 
     if user_state.get("mode") != "song_recording":
-        return  # Игнорируем голосовые не из этого раздела
+        return
 
     song_name = user_state.get("song_name")
     voice_file_id = message.voice.file_id
 
-    # Сохраняем голосовое в базу
-    cursor.execute(
-        '''INSERT INTO voice_notes 
-        (user_id, username, first_name, last_name, song_name, voice_file_id, submission_time)
-        VALUES (?, ?, ?, ?, ?, ?, ?)''',
-        (
-            user_id,
-            message.from_user.username,
-            message.from_user.first_name,
-            message.from_user.last_name,
-            song_name,
-            voice_file_id,
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        )
-    )
-    conn.commit()
-    submission_id = cursor.lastrowid  # Получаем ID добавленной записи
-
-    # Отправляем подтверждение ученику
-    await message.answer(
-        "✅ Твоё голосовое отправлено учителю на проверку!\n"
-        "Скоро получишь обратную связь.",
-        reply_markup=get_music_keyboard()
-    )
-
-    # Отправляем голосовое учителю (вам) с кнопками оценки
-    admin_chat_id = "5157087391"  # Ваш ID
     try:
-        await bot.send_voice(
-            chat_id=admin_chat_id,
-            voice=voice_file_id,
-            caption=f"🎵 Новое задание (#{submission_id}) от @{message.from_user.username}:\n"
-                    f"Песня: {song_name}\n"
-                    f"Ученик: {message.from_user.full_name}\n"
-                    f"Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}",
-            reply_markup=get_review_keyboard(submission_id)  # Добавляем кнопки оценки
+        # Сохраняем голосовое в базу
+        cursor.execute(
+            '''INSERT INTO voice_notes 
+            (user_id, username, first_name, last_name, song_name, voice_file_id, submission_time)
+            VALUES (?, ?, ?, ?, ?, ?, ?)''',
+            (
+                user_id,
+                message.from_user.username,
+                message.from_user.first_name,
+                message.from_user.last_name,
+                song_name,
+                voice_file_id,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            )
         )
+        conn.commit()
+        submission_id = cursor.lastrowid
+
+        # Отправляем подтверждение ученику
+        await message.answer(
+            "✅ Твоё голосовое отправлено учителю на проверку!\n"
+            "Скоро получишь обратную связь.",
+            reply_markup=get_music_keyboard()
+        )
+
+        # Отправляем голосовое учителю
+        try:
+            # Вариант 1: Пересылка голосового сообщения
+            await bot.send_voice(
+                chat_id=5157087391,  # Замените на ваш реальный ID
+                voice=voice_file_id,
+                caption=f"🎵 Новое задание (#{submission_id}) от @{message.from_user.username}:\n"
+                        f"Песня: {song_name}\n"
+                        f"Ученик: {message.from_user.full_name}\n"
+                        f"Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+                reply_markup=get_review_keyboard(submission_id)
+            )
+        except Exception as e:
+            logging.error(f"Ошибка отправки голосового учителю: {e}", exc_info=True)
+            # Вариант 2: Отправка информации без голосового, если не получается
+            await bot.send_message(
+                chat_id=5157087391,
+                text=f"🎵 Новое задание (#{submission_id}) от @{message.from_user.username}:\n"
+                     f"Песня: {song_name}\nУченик: {message.from_user.full_name}\n"
+                     f"Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
+                     f"Голосовое сообщение: {voice_file_id}",
+                reply_markup=get_review_keyboard(submission_id)
+            )
+
     except Exception as e:
-        logging.error(f"Ошибка отправки голосового учителю: {e}")
-        await message.answer("Произошла ошибка при отправке работы учителю. Пожалуйста, сообщите об этом.")
+        logging.error(f"Ошибка при обработке голосового сообщения: {e}", exc_info=True)
+        await message.answer(
+            "Произошла ошибка при обработке вашего сообщения. Пожалуйста, попробуйте позже.",
+            reply_markup=get_music_keyboard()
+        )
 
     # Сбрасываем состояние пользователя
     user_states[user_id] = {}
@@ -1045,7 +1202,7 @@ async def back_handler(message: types.Message):
     # Обработка выхода из режимов викторин
     if mode in ["scale_quiz", "treble_quiz", "bass_quiz",
                 "keyboard_quiz", "note_letters_quiz", "audio_notes_quiz",
-                "clef_quiz"]:
+                "clef_quiz", "stable_degrees"]:
 
         score = user_state.get("score", 0)
         total = user_state.get("total", 0)
@@ -1057,12 +1214,24 @@ async def back_handler(message: types.Message):
             "keyboard_quiz": "по клавиатуре",
             "note_letters_quiz": "по буквенным обозначениям нот",
             "audio_notes_quiz": "по нотам на слух",
-            "clef_quiz": "по музыкальным ключам"
+            "clef_quiz": "по музыкальным ключам",
+            "stable_degrees": "на устойчивые ступени"
         }
 
-        await message.answer(
+        # Формируем сообщение о результатах
+        result_message = (
             f"🏁 Викторина {quiz_names.get(mode, '')} завершена!\n"
-            f"Правильных ответов: {score} из {total}",
+            f"Правильных ответов: {score} из {total}"
+        )
+
+        # Для режима устойчивых ступеней добавляем пояснение
+        if mode == "stable_degrees":
+            result_message += (
+                "\n\nЗапомни: устойчивые ступени - это I, III и V ступени гаммы"
+            )
+
+        await message.answer(
+            result_message,
             reply_markup=ReplyKeyboardMarkup(
                 keyboard=[
                     [KeyboardButton(text="Ступени в гамме")],
@@ -1073,7 +1242,26 @@ async def back_handler(message: types.Message):
             )
         )
 
+        # Сбрасываем состояние викторины, но сохраняем класс
         user_state["mode"] = f"class_{current_class}" if current_class else ""
+        return
+
+    # Возврат в меню класса
+    if mode.startswith("class_"):
+        class_num = mode.split("_")[1]
+        await message.answer(
+            f"Выберите раздел для {class_num} класса:",
+            reply_markup=get_class_keyboard()
+        )
+        user_state["mode"] = ""
+        return
+
+    # Возврат в главное меню из любого другого места
+    await message.answer(
+        "Главное меню:",
+        reply_markup=get_main_keyboard()
+    )
+    user_state["mode"] = ""
 
 
 async def main():
