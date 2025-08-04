@@ -136,31 +136,35 @@ conn.commit()
 user_states = {}
 
 
-# Добавляем в обработчики команд
 @dp.message(F.text == "Устойчивые ступени")
 async def stable_degrees_game(message: types.Message):
     user_id = message.from_user.id
+
+    # Инициализируем состояние только если его нет
+    if user_id not in user_states or user_states[user_id].get("mode") != "stable_degrees":
+        user_states[user_id] = {
+            "mode": "stable_degrees",
+            "score": 0,
+            "total": 0
+        }
 
     # Получаем список всех возможных тональностей
     all_tonalities = list(STABLE_DEGREES.keys())
 
     # Если пользователь уже играл, исключаем предыдущую тональность
-    previous_tonality = user_states.get(user_id, {}).get("tonality")
+    previous_tonality = user_states[user_id].get("tonality")
     available_tonalities = [t for t in all_tonalities if
                             t != previous_tonality] if previous_tonality else all_tonalities
 
     # Выбираем случайную тональность из доступных
     tonality = random.choice(available_tonalities)
 
-    # Сохраняем состояние
-    user_states[user_id] = {
-        "mode": "stable_degrees",
+    # Обновляем состояние
+    user_states[user_id].update({
         "tonality": tonality,
         "correct_answers": STABLE_DEGREES[tonality],
-        "selected_notes": [],
-        "score": user_states.get(user_id, {}).get("score", 0),
-        "total": user_states.get(user_id, {}).get("total", 0) + 1
-    }
+        "selected_notes": []
+    })
 
     await message.answer(
         f"🎵 Выберите УСТОЙЧИВЫЕ ступени в тональности {tonality}:\n"
@@ -227,13 +231,13 @@ async def check_stable_degrees(message: types.Message):
         await message.answer("Нужно выбрать ровно 3 ноты!")
         return
 
+    # Увеличиваем счетчик вопросов
+    user_state["total"] += 1
+
     # Проверяем ответ
     is_correct = set(selected_notes) == set(correct_answers)
-
-    # Обновляем статистику
     if is_correct:
         user_state["score"] += 1
-    user_states[user_id] = user_state
 
     if is_correct:
         response = (
@@ -254,7 +258,7 @@ async def check_stable_degrees(message: types.Message):
     # Задержка перед новым вопросом
     await asyncio.sleep(2)
 
-    # Задаем новый вопрос с другой тональностью
+    # Задаем новый вопрос
     await stable_degrees_game(message)
 
 # Основные клавиатуры
